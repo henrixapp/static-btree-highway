@@ -75,7 +75,20 @@ struct ImplicitStaticBTree {
       }
     }
   }
-  size_t lower_bound(const ValueType val) { return 0; }
+  size_t lower_bound(const ValueType _x) {
+    size_t k = 0;  // we assume k already multiplied by B to optimize pointer arithmetic
+    auto x = hn::Set(d, _x);
+    for (size_t h = H - 1; h > 0; h--) {
+      auto i = hn::CountTrue(d, hn::Lt(hn::Load(d, btree.get() + offsets[h] + k), x)) +
+               hn::CountTrue(d, hn::Lt(hn::Load(d, btree.get() + offsets[h] + k + B / 2), x));
+      k = k * (B + 1) + (i * B);
+    }
+    auto i = hn::CountTrue(d, hn::Lt(hn::Load(d, btree.get() + k), x)) +
+             hn::CountTrue(d, hn::Lt(hn::Load(d, btree.get() + k + B / 2), x));
+
+    auto result = (k + i);
+    return result;
+  }
 };
 // NOLINTNEXTLINE(google-readability-namespace-comments)
 }  // namespace HWY_NAMESPACE

@@ -19,6 +19,7 @@ cc_binary(
     srcs = ["static_btree_benchmark.cc"],
     visibility = ["//visibility:public"],
     deps = [
+        ":static_btree",
         "@google_benchmark//:benchmark_main",
     ],
 )

@@ -308,3 +308,98 @@ The algorithm for building is simply the algorithm given by the article.
 ```
 We skip the permutation of the nodes as outlined in the article, since we later will see that this is a fine-grained improvement, not available on all plattforms in highway.
 
+### Implementing the lower-bound
+
+We can now write the logic needed to find the lower-bound for a value. We want to compare multiple values at the same time, so we populate a Vec `x` with the value we want to search for.
+Notice how we use the `Tag` to use the right implementation.
+The algorithmica implementation uses the greater-eq  and bit-tricks to find the lowerbound in every layer of the b-tree.
+After consulting the [quick-reference](https://github.com/google/highway/blob/master/g3doc/quick_reference.md#test-mask), we replace this by a less-then comparison and counting 
+how many entries are `true` in the mask.
+
+In the reference there is also `FindFirstTrue` or `FindFirstFalse`, but this returns a `-1` if no value is found, which would need an extra branch to detect.
+Feel free to change the implementation to `FindFirstFalse` with an extra if-statement and benchmark it.
+
+```cpp
+  size_t lower_bound(const ValueType val) {
+    size_t k = 0;  // we assume k already multiplied by B to optimize pointer arithmetic
+    auto x = hn::Set(d, _x);
+    for (size_t h = H - 1; h > 0; h--) {
+      auto i = hn::CountTrue(d, hn::Lt(hn::Load(d, btree.get() + offsets[h] + k), x)) +
+               hn::CountTrue(d, hn::Lt(hn::Load(d, btree.get() + offsets[h] + k + B / 2), x));
+      k = k * (B + 1) + (i * B);
+    }
+    auto i = hn::CountTrue(d, hn::Lt(hn::Load(d, btree.get() + k), x)) +
+             hn::CountTrue(d, hn::Lt(hn::Load(d, btree.get() + k + B / 2), x));
+
+    auto result = (k + i);
+    return result;
+  }
+```
+
+In order to test the results, we add a Benchmark to `static_btree/static_btree_benchmark.cc` and add the dependency to our benchmark:
+
+```
+# static_btree/BUILD
+cc_binary(
+    name = "static_btree_benchmark",
+    srcs = ["static_btree_benchmark.cc"],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":static_btree",
+        "@google_benchmark//:benchmark_main",
+    ],
+)
+```
+
+```cpp
+//static_btree/static_btree_benchmark.cc
+#include "static_btree/static_btree.hh"
+//..
+template <template <typename> typename Tree, typename ValueType>
+static void TreeLowerBound(benchmark::State& state) {
+  srand(42);
+  auto points = gen_data<ValueType>(state.range(0), 40);
+  std::sort(points.begin(), points.end());
+  auto queries = gen_data<ValueType>(state.range(0) / 2, 4);
+  Tree<ValueType> tree(points);
+
+  for (auto _ : state) {
+    ValueType mask = 0;
+    for (auto p : queries) {
+      auto s = tree.lower_bound(p);
+      mask ^= s;
+    }
+    state.counters["mask"] = mask;
+  }
+}
+BENCHMARK(TreeLowerBound<henrixapp::static_btree::N_AVX3::ImplicitStaticBTree, uint32_t>)
+    ->Arg(100)
+    ->Arg(1000)
+    ->Arg(10000)
+    ->Arg(1e6);
+```
+
+Now we can run the benchmark and see the results:
+
+```
+Run on (16 X 3293.83 MHz CPU s)
+CPU Caches:
+  L1 Data 32 KiB (x8)
+  L1 Instruction 32 KiB (x8)
+  L2 Unified 1024 KiB (x8)
+  L3 Unified 16384 KiB (x1)
+Load Average: 0.42, 0.48, 0.34
+-------------------------------------------------------------------------------------------------------------------------------------------------
+Benchmark                                                                                       Time             CPU   Iterations UserCounters...
+-------------------------------------------------------------------------------------------------------------------------------------------------
+TreeLowerBound<henrixapp::static_btree::N_AVX3::ImplicitStaticBTree, uint32_t>/100            130 ns          133 ns      5092794 mask=20
+TreeLowerBound<henrixapp::static_btree::N_AVX3::ImplicitStaticBTree, uint32_t>/1000          1295 ns         1327 ns       514982 mask=1.01k
+TreeLowerBound<henrixapp::static_btree::N_AVX3::ImplicitStaticBTree, uint32_t>/10000        20176 ns        20672 ns        32612 mask=15.113k
+TreeLowerBound<henrixapp::static_btree::N_AVX3::ImplicitStaticBTree, uint32_t>/1000000    3663054 ns      3753407 ns          200 mask=748.516k
+StdLowerBound<uint32_t>/100                                                                   142 ns          146 ns      4736248 mask=20
+StdLowerBound<uint32_t>/1000                                                                 5317 ns         2093 ns       336615 mask=1.01k
+StdLowerBound<uint32_t>/10000                                                               32462 ns        33004 ns        21480 mask=15.113k
+StdLowerBound<uint32_t>/1000000                                                          10796554 ns     10976693 ns           70 mask=748.516k
+```
+We can see that the masks are identical and we are also faster than std::lower_bound.
+Furthermore,  our simple test passes (`bazel test -c dbg static_btree:static_btree_test --test_output=all`).
