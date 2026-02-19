@@ -403,3 +403,7 @@ StdLowerBound<uint32_t>/1000000                                                 
 ```
 We can see that the masks are identical and we are also faster than std::lower_bound.
 Furthermore,  our simple test passes (`bazel test -c dbg static_btree:static_btree_test --test_output=all`).
+
+## Benchmarking
+
+We now have a code for static implicit, b+-tree that is realitively agnostic to the architecture and data type used.
