@@ -104,7 +104,7 @@ def plot_benchmarks(json_file):
             x="N",
             y="speedup",
             hue="ISA",
-            style="ISA",
+            style="B",
             markers=True,
             dashes=False,
         )

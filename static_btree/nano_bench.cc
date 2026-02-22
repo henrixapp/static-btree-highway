@@ -22,10 +22,10 @@
 
 namespace static_btree_bench {
 
-static constexpr const int query_sets = 1;
-static constexpr const int queries_per_sets = 10000;
 namespace HWY_NAMESPACE {
 namespace {
+static constexpr const int query_sets = 1;
+static constexpr const int queries_per_sets = 10000;
 template <class LowerBoundable>
 struct Benchmark {
   using DataType = typename LowerBoundable::DataType;
@@ -96,6 +96,24 @@ struct BenchmarkSuite {
     }
   }
 };
+struct BenchmarkSuite1 {
+  template <typename DT>
+  void operator()(DT) const {
+    using BTree = henrixapp::static_btree::HWY_NAMESPACE::ImplicitStaticBTree1<DT>;
+    auto info = hwy::detail::MakeTypeInfo<DT>();
+    char type_name[100];
+    hwy::detail::TypeName(info, 1, type_name);
+    for (size_t i = 100; i < std::numeric_limits<DT>::max(); i *= 10) {
+      if (i > 1e7) {
+        break;
+      }
+      RunBench<BTree, query_sets, queries_per_sets>(
+          std::string(hwy::TargetName(HWY_TARGET)) + "," + std::to_string(BTree({}).B) + "," +
+              std::to_string(i) + "," + std::string(type_name),
+          i);
+    }
+  }
+};
 template <typename DT>
 struct StdLowerbounder {
   using DataType = DT;
@@ -122,6 +140,8 @@ struct StdLowerboundSuite {
   }
 };
 void RunBenchmark() { hn::ForAllTypes(BenchmarkSuite()); }
+void RunBenchmark1() { hn::ForAllTypes(BenchmarkSuite1()); }
+
 void RunStdLowerboundBenchmark() { hn::ForAllTypes(StdLowerboundSuite()); }
 }  // namespace HWY_NAMESPACE
 }  // namespace static_btree_bench
@@ -134,11 +154,13 @@ struct is_floating_point<hwy::float16_t> : std::true_type {};
 namespace static_btree_bench {
 
 HWY_EXPORT(RunBenchmark);
+HWY_EXPORT(RunBenchmark1);
 HWY_EXPORT(RunStdLowerboundBenchmark);
 void RunBenchmarks() {
   for (int64_t target : hwy::SupportedAndGeneratedTargets()) {
     hwy::SetSupportedTargetsForTest(target);
     HWY_DYNAMIC_DISPATCH(RunBenchmark)();
+    HWY_DYNAMIC_DISPATCH(RunBenchmark1)();
   }
   HWY_DYNAMIC_DISPATCH(RunStdLowerboundBenchmark)();
   hwy::SetSupportedTargetsForTest(0);  // Reset the mask afterwards.
