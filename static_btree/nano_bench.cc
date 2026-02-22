@@ -3,6 +3,8 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <limits>
+#include <string>
 
 #include "static_btree/benchmark_helpers.hh"
 #undef HWY_TARGET_INCLUDE
@@ -14,11 +16,16 @@
 #include "hwy/foreach_target.h"  // IWYU pragma: keep
 #include "hwy/highway.h"
 #include "hwy/nanobenchmark.h"
+#include "hwy/tests/test_util-inl.h"
 #include "static_btree/benchmark_helpers.hh"
 #include "static_btree/static_btree.hh"
 
-#if HWY_ONCE
-namespace nanobench {
+namespace static_btree_bench {
+
+static constexpr const int query_sets = 1;
+static constexpr const int queries_per_sets = 10000;
+namespace HWY_NAMESPACE {
+namespace {
 template <class LowerBoundable>
 struct Benchmark {
   using DataType = typename LowerBoundable::DataType;
@@ -35,8 +42,8 @@ struct Benchmark {
     return Mask;
   }
 };
-template <typename DS, int n_inputs, int n_queries, int num_per_query>
-HWY_NOINLINE void RunBench(const std::string& name) {
+template <typename DS, int n_queries, int num_per_query>
+void RunBench(const std::string& name, size_t n_inputs) {
   using DT = typename DS::DataType;
   srand(42);
   std::mt19937_64 rng(rand());
@@ -69,7 +76,26 @@ HWY_NOINLINE void RunBench(const std::string& name) {
   }
   std::cout << name << "," << ticks / n_queries << "," << var / n_queries << std::endl;
 }
-}  // namespace nanobench
+}  // namespace
+namespace hn = hwy::HWY_NAMESPACE;
+struct BenchmarkSuite {
+  template <typename DT>
+  void operator()(DT) const {
+    using BTree = henrixapp::static_btree::HWY_NAMESPACE::ImplicitStaticBTree<DT>;
+    auto info = hwy::detail::MakeTypeInfo<DT>();
+    char type_name[100];
+    hwy::detail::TypeName(info, 1, type_name);
+    for (size_t i = 100; i < std::numeric_limits<DT>::max(); i *= 10) {
+      if (i > 1e7) {
+        break;
+      }
+      RunBench<BTree, query_sets, queries_per_sets>(
+          std::string(hwy::TargetName(HWY_TARGET)) + "," + std::to_string(BTree({}).B) + "," +
+              std::to_string(i) + "," + std::string(type_name),
+          i);
+    }
+  }
+};
 template <typename DT>
 struct StdLowerbounder {
   using DataType = DT;
@@ -79,96 +105,48 @@ struct StdLowerbounder {
     return std::lower_bound(data.begin(), data.end(), val) - data.begin();
   }
 };
+struct StdLowerboundSuite {
+  template <typename DT>
+  void operator()(DT) const {
+    using STLLowerbounder = StdLowerbounder<DT>;
+    auto info = hwy::detail::MakeTypeInfo<DT>();
+    char type_name[100];
+    hwy::detail::TypeName(info, 1, type_name);
+    for (size_t i = 100; i < std::numeric_limits<DT>::max(); i *= 10) {
+      if (i > 1e7) {
+        break;
+      }
+      RunBench<STLLowerbounder, query_sets, queries_per_sets>(
+          std::string("STL,2,") + std::to_string(i) + "," + std::string(type_name), i);
+    }
+  }
+};
+void RunBenchmark() { hn::ForAllTypes(BenchmarkSuite()); }
+void RunStdLowerboundBenchmark() { hn::ForAllTypes(StdLowerboundSuite()); }
+}  // namespace HWY_NAMESPACE
+}  // namespace static_btree_bench
+#if HWY_ONCE
+namespace std {
+// 3. Explicit specialization for our custom type
+template <>
+struct is_floating_point<hwy::float16_t> : std::true_type {};
+}  // namespace std
+namespace static_btree_bench {
+
+HWY_EXPORT(RunBenchmark);
+HWY_EXPORT(RunStdLowerboundBenchmark);
+void RunBenchmarks() {
+  for (int64_t target : hwy::SupportedAndGeneratedTargets()) {
+    hwy::SetSupportedTargetsForTest(target);
+    HWY_DYNAMIC_DISPATCH(RunBenchmark)();
+  }
+  HWY_DYNAMIC_DISPATCH(RunStdLowerboundBenchmark)();
+  hwy::SetSupportedTargetsForTest(0);  // Reset the mask afterwards.
+}
+}  // namespace static_btree_bench
 int main() {
-  static constexpr const int query_sets = 1;
-  static constexpr const int queries_per_sets = 10000;
-
-#define STD_LOWER_BOUND_BENCH(TYPE, ELEMS)                                            \
-  nanobench::RunBench<StdLowerbounder<int32_t>, ELEMS, query_sets, queries_per_sets>( \
-      #ELEMS ",StdLowerbound,STL," #TYPE                                              \
-             ","                                                                      \
-             "0");
-  STD_LOWER_BOUND_BENCH(uint8_t, 100)
-  STD_LOWER_BOUND_BENCH(uint8_t, 200)
-  STD_LOWER_BOUND_BENCH(uint16_t, 100)
-  STD_LOWER_BOUND_BENCH(uint16_t, 1000)
-  STD_LOWER_BOUND_BENCH(uint16_t, 10000)
-  STD_LOWER_BOUND_BENCH(uint16_t, 50000)
-  STD_LOWER_BOUND_BENCH(uint32_t, 100)
-  STD_LOWER_BOUND_BENCH(uint32_t, 1000)
-  STD_LOWER_BOUND_BENCH(uint32_t, 10000)
-  STD_LOWER_BOUND_BENCH(uint32_t, 100000)
-  STD_LOWER_BOUND_BENCH(uint32_t, 1000000)
-  STD_LOWER_BOUND_BENCH(uint32_t, 10000000)
-  STD_LOWER_BOUND_BENCH(uint64_t, 100)
-  STD_LOWER_BOUND_BENCH(uint64_t, 1000)
-  STD_LOWER_BOUND_BENCH(uint64_t, 10000)
-  STD_LOWER_BOUND_BENCH(uint64_t, 100000)
-  STD_LOWER_BOUND_BENCH(uint64_t, 1000000)
-  STD_LOWER_BOUND_BENCH(uint64_t, 10000000)
-  STD_LOWER_BOUND_BENCH(int8_t, 100)
-  STD_LOWER_BOUND_BENCH(int8_t, 200)
-  STD_LOWER_BOUND_BENCH(int16_t, 100)
-  STD_LOWER_BOUND_BENCH(int16_t, 1000)
-  STD_LOWER_BOUND_BENCH(int16_t, 10000)
-  STD_LOWER_BOUND_BENCH(int16_t, 50000)
-  STD_LOWER_BOUND_BENCH(int32_t, 100)
-  STD_LOWER_BOUND_BENCH(int32_t, 1000)
-  STD_LOWER_BOUND_BENCH(int32_t, 10000)
-  STD_LOWER_BOUND_BENCH(int32_t, 100000)
-  STD_LOWER_BOUND_BENCH(int32_t, 1000000)
-  STD_LOWER_BOUND_BENCH(int32_t, 10000000)
-  STD_LOWER_BOUND_BENCH(int64_t, 100)
-  STD_LOWER_BOUND_BENCH(int64_t, 1000)
-  STD_LOWER_BOUND_BENCH(int64_t, 10000)
-  STD_LOWER_BOUND_BENCH(int64_t, 100000)
-  STD_LOWER_BOUND_BENCH(int64_t, 1000000)
-  STD_LOWER_BOUND_BENCH(int64_t, 10000000)
-#define BTREE_LOWER_BOUND_MACRO(T, N, TYPE, ELEMS)                                              \
-  nanobench::RunBench<henrixapp::static_btree::N::ImplicitStaticBTree<TYPE>, ELEMS, query_sets, \
-                      queries_per_sets>(                                                        \
-      #ELEMS ",StaticBTree," #N "," #TYPE "," +                                                 \
-      std::to_string(henrixapp::static_btree::N::ImplicitStaticBTree<TYPE>::B));
-
-#define RUN_ALL_BENCHMARKS(T, N)                    \
-  BTREE_LOWER_BOUND_MACRO(T, N, uint8_t, 100)       \
-  BTREE_LOWER_BOUND_MACRO(T, N, uint8_t, 200)       \
-  BTREE_LOWER_BOUND_MACRO(T, N, uint16_t, 100)      \
-  BTREE_LOWER_BOUND_MACRO(T, N, uint16_t, 1000)     \
-  BTREE_LOWER_BOUND_MACRO(T, N, uint16_t, 10000)    \
-  BTREE_LOWER_BOUND_MACRO(T, N, uint16_t, 50000)    \
-  BTREE_LOWER_BOUND_MACRO(T, N, uint32_t, 100)      \
-  BTREE_LOWER_BOUND_MACRO(T, N, uint32_t, 1000)     \
-  BTREE_LOWER_BOUND_MACRO(T, N, uint32_t, 10000)    \
-  BTREE_LOWER_BOUND_MACRO(T, N, uint32_t, 100000)   \
-  BTREE_LOWER_BOUND_MACRO(T, N, uint32_t, 1000000)  \
-  BTREE_LOWER_BOUND_MACRO(T, N, uint32_t, 10000000) \
-  BTREE_LOWER_BOUND_MACRO(T, N, uint64_t, 100)      \
-  BTREE_LOWER_BOUND_MACRO(T, N, uint64_t, 1000)     \
-  BTREE_LOWER_BOUND_MACRO(T, N, uint64_t, 10000)    \
-  BTREE_LOWER_BOUND_MACRO(T, N, uint64_t, 100000)   \
-  BTREE_LOWER_BOUND_MACRO(T, N, uint64_t, 1000000)  \
-  BTREE_LOWER_BOUND_MACRO(T, N, uint64_t, 10000000) \
-  BTREE_LOWER_BOUND_MACRO(T, N, int8_t, 100)        \
-  BTREE_LOWER_BOUND_MACRO(T, N, int8_t, 200)        \
-  BTREE_LOWER_BOUND_MACRO(T, N, int16_t, 100)       \
-  BTREE_LOWER_BOUND_MACRO(T, N, int16_t, 1000)      \
-  BTREE_LOWER_BOUND_MACRO(T, N, int16_t, 10000)     \
-  BTREE_LOWER_BOUND_MACRO(T, N, int16_t, 50000)     \
-  BTREE_LOWER_BOUND_MACRO(T, N, int32_t, 100)       \
-  BTREE_LOWER_BOUND_MACRO(T, N, int32_t, 1000)      \
-  BTREE_LOWER_BOUND_MACRO(T, N, int32_t, 10000)     \
-  BTREE_LOWER_BOUND_MACRO(T, N, int32_t, 100000)    \
-  BTREE_LOWER_BOUND_MACRO(T, N, int32_t, 1000000)   \
-  BTREE_LOWER_BOUND_MACRO(T, N, int32_t, 10000000)  \
-  BTREE_LOWER_BOUND_MACRO(T, N, int64_t, 100)       \
-  BTREE_LOWER_BOUND_MACRO(T, N, int64_t, 1000)      \
-  BTREE_LOWER_BOUND_MACRO(T, N, int64_t, 10000)     \
-  BTREE_LOWER_BOUND_MACRO(T, N, int64_t, 100000)    \
-  BTREE_LOWER_BOUND_MACRO(T, N, int64_t, 1000000)   \
-  BTREE_LOWER_BOUND_MACRO(T, N, int64_t, 10000000)
-
-  HWY_VISIT_TARGETS(RUN_ALL_BENCHMARKS);
+  std::cout << "ISA,B,N,Type,cpu_mean,var" << std::endl;
+  static_btree_bench::RunBenchmarks();
   return 0;
 }
 #endif

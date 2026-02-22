@@ -163,57 +163,84 @@ cc_test(
         ":static_btree",
         "@googletest//:gtest",
         "@googletest//:gtest_main",
+        "@highway//:hwy_test_util",
     ],
 )
 ```
+In the static_btree_test.cc we define `HWY_TARGET_INCLUDE` to link to itself, before including `#include "hwy/foreach_target.h`.
+The highway header and our header file need to be included afterward.
 
+We define a basic test for our class with some static data.
+The HWY_NAMESPACE is properly replaced for every type.
+Guarded by a `HWY_ONCE`, we register tests.
 ```cpp
 // static_btree/static_btree_test.cc
+#include "hwy/tests/hwy_gtest.h"
+// clang-format off
+#undef HWY_TARGET_INCLUDE
+#define HWY_TARGET_INCLUDE "static_btree/static_btree_test.cc"
+#include "hwy/foreach_target.h"  // IWYU pragma: keep
+#include "hwy/highway.h"
+#include "hwy/tests/test_util-inl.h"
+// clang-format on
 #include "static_btree/static_btree.hh"
 
-#include <gtest/gtest-matchers.h>
-#include <gtest/gtest.h>
-#include <sys/types.h>
-
-TEST(StaticBTreeTest, BasicTests) {
-  using VT = uint32_t;
-  std::vector<VT> values{1, 10, 14, 28, 36};
-  // We will later replace this and generate test for every architecture available
-  henrixapp::static_btree::N_SSE2::ImplicitStaticBTree<VT> btree(values);
-  ASSERT_EQ(btree.lower_bound(100), 5) << "Out of bound test failed";
-  ASSERT_EQ(btree.lower_bound(0), 0) << "Smaller than value test failed";
-}
+HWY_BEFORE_NAMESPACE();
+namespace static_btree_test {
+namespace HWY_NAMESPACE {
+namespace hn = hwy::HWY_NAMESPACE;
+struct BasicTests {
+   template <class VT>
+  void operator()(VT) const {
+    std::vector<VT> values{1, 10, 14, 28, 36};
+    // We will later replace this and generate test for every architecture available
+    henrixapp::static_btree::HWY_NAMESPACE::ImplicitStaticBTree<VT> btree(values);
+    HWY_ASSERT_EQ(5, btree.lower_bound(100));
+    HWY_ASSERT_EQ(0, btree.lower_bound(0));
+    HWY_ASSERT_EQ(0, btree.lower_bound(1));
+  }
+};
+void TestAllBTree() { hn::ForAllTypes(BasicTests()); }
+}  // namespace HWY_NAMESPACE
+}  // namespace static_btree_test
+HWY_AFTER_NAMESPACE();
+#if HWY_ONCE
+namespace static_btree_test {
+namespace {
+HWY_BEFORE_TEST(BTreeTest);
+HWY_EXPORT_AND_TEST_P(BTreeTest, TestAllBTree);
+HWY_AFTER_TEST();
+}  // namespace
+}  // namespace static_btree_test
+HWY_TEST_MAIN();
+#endif  // HWY_ONCE
 ```
 
-Executing the test (assuming you have sse2 support on your CPU, that is almost guaranteed), you will get:
+Executing the test, you will get:
 
 ```sh
-bazel test -c opt static_btree:static_btree_test --test_output=all
+$ bazel test -c dbg static_btree:static_btree_test --test_output=all
 ...
+==================== Test output for //static_btree:static_btree_test:
 Running main() from gmock_main.cc
-[==========] Running 1 test from 1 test suite.
+[==========] Running 7 tests from 1 test suite.
 [----------] Global test environment set-up.
-[----------] 1 test from StaticBTreeTest
-[ RUN      ] StaticBTreeTest.BasicTests
-static_btree/static_btree_test.cc:12: Failure
-Expected equality of these values:
-  btree.lower_bound(100)
-    Which is: 0
-  5
-Out of bound test failed
+[----------] 7 tests from BTreeTestGroup/BTreeTest
+[ RUN      ] BTreeTestGroup/BTreeTest.TestAllBTree/AVX3_ZEN4
+Abort at static_btree_test.cc:24: AVX3_ZEN4, u64x1 lane 0 mismatch: expected '0x0000000000000005', got '0x0000000000000000'.
 
-[  FAILED  ] StaticBTreeTest.BasicTests (0 ms)
-[----------] 1 test from StaticBTreeTest (0 ms total)
-
-[----------] Global test environment tear-down
-[==========] 1 test from 1 test suite ran. (0 ms total)
-[  PASSED  ] 0 tests.
-[  FAILED  ] 1 test, listed below:
-[  FAILED  ] StaticBTreeTest.BasicTests
-
- 1 FAILED TEST
-...
+================================================================================
+INFO: Found 1 test target...
+Target //static_btree:static_btree_test up-to-date:
+  bazel-bin/static_btree/static_btree_test
+INFO: Elapsed time: 11.752s, Critical Path: 11.38s
+INFO: 27 processes: 15 action cache hit, 27 linux-sandbox.
+INFO: Build completed, 1 test FAILED, 27 total actions
+//static_btree:static_btree_test                                         FAILED in 0.0s
 ```
+You can see that using the `HWY_ASSERT_EQ` we can see on which architecture this test failed, here it is AVX3_ZEN4, the first architecture in the list.
+If you want to see a failure on a specific data-type later, you can add a `258` to the list and compile with `--cxxopt=-Wno-narrowing`.
+Then only the 8-bit data-types will fail.
 
 ## Constructing the B+-Tree
 
@@ -259,12 +286,12 @@ Since we later want to use Load (requiring the offsets to be a multiple of #Numb
   std::vector<size_t> offsets;
   hwy::AlignedFreeUniquePtr<ValueType[]> btree;
   explicit ImplicitStaticBTree(const size_t N)
-      : N(N),
-        H(height(N))
+      :
 #if !HWY_HAVE_CONSTEXPR_LANES
-        ,
-        B(2 * hn::Lanes(d))
-#endif
+        B(2 * hn::Lanes(d)),
+#endif N(N),
+        H(height(N))
+
   {
     offsets.resize(H + 1, 0);
     size_t k = 0, n = N;
@@ -402,8 +429,34 @@ StdLowerBound<uint32_t>/10000                                                   
 StdLowerBound<uint32_t>/1000000                                                          10796554 ns     10976693 ns           70 mask=748.516k
 ```
 We can see that the masks are identical and we are also faster than std::lower_bound.
-Furthermore,  our simple test passes (`bazel test -c dbg static_btree:static_btree_test --test_output=all`).
+Furthermore, our simple test passes (`bazel test -c dbg static_btree:static_btree_test --test_output=all`).
+```
+Running main() from gmock_main.cc
+[==========] Running 7 tests from 1 test suite.
+[----------] Global test environment set-up.
+[----------] 7 tests from BTreeTestGroup/BTreeTest
+[ RUN      ] BTreeTestGroup/BTreeTest.TestAllBTree/AVX3_ZEN4
+[       OK ] BTreeTestGroup/BTreeTest.TestAllBTree/AVX3_ZEN4 (0 ms)
+[ RUN      ] BTreeTestGroup/BTreeTest.TestAllBTree/AVX3_DL
+[       OK ] BTreeTestGroup/BTreeTest.TestAllBTree/AVX3_DL (0 ms)
+[ RUN      ] BTreeTestGroup/BTreeTest.TestAllBTree/AVX3
+[       OK ] BTreeTestGroup/BTreeTest.TestAllBTree/AVX3 (0 ms)
+[ RUN      ] BTreeTestGroup/BTreeTest.TestAllBTree/AVX2
+[       OK ] BTreeTestGroup/BTreeTest.TestAllBTree/AVX2 (0 ms)
+[ RUN      ] BTreeTestGroup/BTreeTest.TestAllBTree/SSE4
+[       OK ] BTreeTestGroup/BTreeTest.TestAllBTree/SSE4 (0 ms)
+[ RUN      ] BTreeTestGroup/BTreeTest.TestAllBTree/SSSE3
+[       OK ] BTreeTestGroup/BTreeTest.TestAllBTree/SSSE3 (0 ms)
+[ RUN      ] BTreeTestGroup/BTreeTest.TestAllBTree/SSE2
+[       OK ] BTreeTestGroup/BTreeTest.TestAllBTree/SSE2 (0 ms)
+[----------] 7 tests from BTreeTestGroup/BTreeTest (0 ms total)
 
+[----------] Global test environment tear-down
+[==========] 7 tests from 1 test suite ran. (0 ms total)
+[  PASSED  ] 7 tests.
+================================================================================
+//static_btree:static_btree_test                                (cached) PASSED in 0.0s
+```
 ## Benchmarking
 
 We now have a code for static implicit, b+-tree that is relatively agnostic to the architecture and data type used.

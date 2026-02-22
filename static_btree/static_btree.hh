@@ -29,12 +29,13 @@ struct ImplicitStaticBTree {
   std::vector<size_t> offsets;
   hwy::AlignedFreeUniquePtr<ValueType[]> btree;
   explicit ImplicitStaticBTree(const size_t N)
-      : N(N),
-        H(height(N))
+      :
 #if !HWY_HAVE_CONSTEXPR_LANES
-        ,
-        B(2 * hn::Lanes(d))
+        B(2 * hn::Lanes(d)),
 #endif
+        N(N),
+        H(height(N))
+
   {
     offsets.resize(H + 1, 0);
     size_t k = 0, n = N;

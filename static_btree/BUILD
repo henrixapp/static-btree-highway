@@ -11,6 +11,7 @@ cc_test(
         ":static_btree",
         "@googletest//:gtest",
         "@googletest//:gtest_main",
+        "@highway//:hwy_test_util",
     ],
 )
 
@@ -36,6 +37,8 @@ cc_binary(
     visibility = ["//visibility:public"],
     deps = [
         ":static_btree",
+        "@googletest//:gtest",
+        "@highway//:hwy_test_util",
         "@highway//:nanobenchmark",
     ],
 )
