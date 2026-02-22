@@ -13,6 +13,7 @@ namespace hn = hwy::HWY_NAMESPACE;  // later used to get the correct functions f
                                     // architecture.
 template <typename ValueType>
 struct ImplicitStaticBTree {
+  using DataType = ValueType;
   static constexpr const hn::ScalableTag<ValueType> d{};
 #if HWY_HAVE_CONSTEXPR_LANES
   static const HWY_LANES_CONSTEXPR size_t B = 2 * hn::Lanes(d);

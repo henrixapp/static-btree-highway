@@ -122,7 +122,7 @@ cc_library(
 
 We init the static_btree.hh file with the harness [defined in the skeleton.cc](https://github.com/google/highway/blob/master/hwy/examples/skeleton.cc)
 and define a dummy `ImplicitStaticBTree` struct, that has a constructor taking in values as a vector and a lowerbound method, to get the index of a lowerbound.
-Note, that the current implementation is just made to get the code compile.
+Note, that the current implementation is just made to get the code compile. The `#include hwy/foreach_target.h` should be normally made in the CC file of the compile target.
 ```cpp
 //static_btree.hh
 // notice that there is no #pragma once (would cause the reinclusion to fail)
@@ -406,4 +406,80 @@ Furthermore,  our simple test passes (`bazel test -c dbg static_btree:static_btr
 
 ## Benchmarking
 
-We now have a code for static implicit, b+-tree that is realitively agnostic to the architecture and data type used.
+We now have a code for static implicit, b+-tree that is relatively agnostic to the architecture and data type used.
+Instead of hard-coding the specific instruction set we want to dispatch to the best available implementation.
+This is shown in the following code snippet as 
+Therefore, we have to move the for-each target generation to the static_btree/static_btree_benchmark.cc file and reorganize the includes.
+We move our data_generator and running template to a seperate header file ([benchmark_helpers.hh](static_btree/benchmark_helpers.hh)) and guard them with a `#pragma once`.
+The best implementation dispatch is done via HWY_EXPORT_AND_DYNAMIC_DISPATCH_T.
+If you do not need a template, use `HWY_EXPORT` and `HWY_DYNAMIC_DISPATCH`. 
+Additionally, we use the visitor pattern provided with `HWY_VISIT_TARGETS` to list all benchmarks available on our current platform.
+We wrap this code in `HWY_ONCE` since we want to make sure that it gets only compiled once in our translation unit.
+
+```cpp
+#include <algorithm>
+#include <cstdint>
+#include <limits>
+#include <vector>
+
+#include "benchmark/benchmark.h"
+#include "static_btree/benchmark_helpers.hh"
+
+#undef HWY_TARGET_INCLUDE
+// For dynamic dispatch, specify the name of the current file (unfortunately
+// __FILE__ is not reliable) so that foreach_target.h can re-include it.
+#define HWY_TARGET_INCLUDE "static_btree/static_btree_benchmark.cc"
+// Generates code for each enabled target by re-including this source file.
+
+#include "hwy/foreach_target.h"  // IWYU pragma: keep
+//important that hwy/highway and our header are included afterwards.
+#include "hwy/highway.h"
+#include "static_btree/static_btree.hh"
+
+HWY_BEFORE_NAMESPACE();
+namespace bench {
+namespace HWY_NAMESPACE {
+template <typename DataType>
+void RunStaticBTreeInternal(benchmark::State& st) {
+  TreeLowerBound<henrixapp::static_btree::HWY_NAMESPACE::ImplicitStaticBTree, DataType, 1, 1>(st);
+}
+}  // namespace HWY_NAMESPACE
+}  // namespace bench
+HWY_AFTER_NAMESPACE();
+#if HWY_ONCE
+namespace bench {
+template <typename DT>
+void BestImplementation(benchmark::State& st) {
+  HWY_EXPORT_AND_DYNAMIC_DISPATCH_T(RunStaticBTreeInternal<DT>)(st);
+}
+BENCHMARK(bench::BestImplementation<int>)->Arg(100);
+
+#define MY_BENCH_MACRO(T, N, TYPE)                                                       \
+  BENCHMARK(TreeLowerBound<henrixapp::static_btree::N::ImplicitStaticBTree, TYPE, 1, 1>) \
+      ->Name("StaticBTree," #N "," #TYPE "," +                                           \
+             std::to_string(henrixapp::static_btree::N::ImplicitStaticBTree<TYPE>::B))   \
+      ->Arg(100)                                                                         \
+      ->Arg(1000)                                                                        \
+      ->Arg(10000)                                                                       \
+      ->Arg(1e6)                                                                         \
+      ->Arg(1e7);
+
+#define RUN_ALL_BENCHMARKS(T, N) \
+  MY_BENCH_MACRO(T, N, uint8_t)  \
+  MY_BENCH_MACRO(T, N, uint16_t) \
+  MY_BENCH_MACRO(T, N, uint32_t) \
+  MY_BENCH_MACRO(T, N, uint64_t) \
+  MY_BENCH_MACRO(T, N, int8_t)   \
+  MY_BENCH_MACRO(T, N, int16_t)  \
+  MY_BENCH_MACRO(T, N, int32_t)  \
+  MY_BENCH_MACRO(T, N, int64_t)
+
+HWY_VISIT_TARGETS(RUN_ALL_BENCHMARKS);
+// ...
+#endif
+```
+With this setup we are good to go to run on multiple platforms.
+
+### Results
+We generated these plots by running `bazel run -c opt //static_btree:static_btree_benchmark -- --benchmark_out=$PWD/benchmark_results.json --benchmark_out_format=json`
+#### Laptop (AMD Ryzen 7840 Pro)

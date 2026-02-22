@@ -16,10 +16,26 @@ cc_test(
 
 cc_binary(
     name = "static_btree_benchmark",
-    srcs = ["static_btree_benchmark.cc"],
+    srcs = [
+        "benchmark_helpers.hh",
+        "static_btree_benchmark.cc",
+    ],
     visibility = ["//visibility:public"],
     deps = [
         ":static_btree",
         "@google_benchmark//:benchmark_main",
+    ],
+)
+
+cc_binary(
+    name = "nano_benchmark",
+    srcs = [
+        "benchmark_helpers.hh",
+        "nano_bench.cc",
+    ],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":static_btree",
+        "@highway//:nanobenchmark",
     ],
 )

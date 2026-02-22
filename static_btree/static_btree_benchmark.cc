@@ -1,8 +1,10 @@
 #include <algorithm>
 #include <cstdint>
+#include <limits>
 #include <vector>
 
 #include "benchmark/benchmark.h"
+#include "static_btree/benchmark_helpers.hh"
 
 #undef HWY_TARGET_INCLUDE
 // For dynamic dispatch, specify the name of the current file (unfortunately
@@ -17,32 +19,6 @@
 HWY_BEFORE_NAMESPACE();
 namespace bench {
 namespace HWY_NAMESPACE {
-template <typename ValueType>
-std::vector<ValueType> gen_data(size_t s, size_t scale) {
-  std::vector<ValueType> points(s);
-  for (auto& p : points) {
-    p = rand() % (std::numeric_limits<ValueType>::max() / scale);
-  }
-  return points;
-}
-template <template <typename> typename Tree, typename ValueType>
-static void TreeLowerBound(benchmark::State& state) {
-  srand(42);
-  auto points = gen_data<ValueType>(state.range(0), 40);
-  std::sort(points.begin(), points.end());
-  auto queries = gen_data<ValueType>(state.range(0) / 2, 4);
-  Tree<ValueType> tree(points);
-
-  for (auto _ : state) {
-    ValueType mask = 0;
-    for (auto p : queries) {
-      auto s = tree.lower_bound(p);
-      mask ^= s;
-    }
-    state.counters["mask"] = mask;
-  }
-}
-
 template <typename DataType>
 void RunStaticBTreeInternal(benchmark::State& st) {
   TreeLowerBound<henrixapp::static_btree::HWY_NAMESPACE::ImplicitStaticBTree, DataType>(st);
@@ -52,41 +28,86 @@ void RunStaticBTreeInternal(benchmark::State& st) {
 HWY_AFTER_NAMESPACE();
 #if HWY_ONCE
 namespace bench {
-template <typename DataType>
-static void StaticBTreeBenchmark(benchmark::State& st) {
-  HWY_EXPORT_AND_DYNAMIC_DISPATCH_T(RunStaticBTreeInternal<DataType>)(st);
+template <typename DT>
+void BestImplementation(benchmark::State& st) {
+  HWY_EXPORT_AND_DYNAMIC_DISPATCH_T(RunStaticBTreeInternal<DT>)(st);
 }
-BENCHMARK_TEMPLATE(StaticBTreeBenchmark, uint32_t)->Arg(100)->Arg(1000)->Arg(10000)->Arg(1e6);
-BENCHMARK_TEMPLATE(StaticBTreeBenchmark, uint64_t)->Arg(100)->Arg(1000)->Arg(10000)->Arg(1e6);
-BENCHMARK_TEMPLATE(StaticBTreeBenchmark, uint16_t)->Arg(100)->Arg(1000)->Arg(10000)->Arg(1e6);
-
-template <typename ValueType>
-std::vector<ValueType> gen_data(size_t s, size_t scale) {
-  std::vector<ValueType> points(s);
-  for (auto& p : points) {
-    p = rand() % (std::numeric_limits<ValueType>::max() / scale);
+BENCHMARK(bench::BestImplementation<int>)->Arg(100);
+template <template <typename> typename Tree, typename ValueType>
+static void TreeLowerBound(benchmark::State& state) {
+  srand(42);
+  std::mt19937_64 rng(rand());
+  auto points = gen_data<ValueType>(state.range(0), rng);
+  std::sort(points.begin(), points.end());
+  auto queries = gen_data<ValueType>(1e6, rng);
+  Tree<ValueType> tree(points);
+  size_t mask = 0;
+  for (auto _ : state) {
+    mask = 0;
+    for (auto p : queries) {
+      auto s = tree.lower_bound(p);
+      mask ^= s;
+      benchmark::DoNotOptimize(mask);
+    }
   }
-  return points;
+  state.counters["mask"] = mask;
 }
+#define MY_BENCH_MACRO(T, N, TYPE)                                                     \
+  BENCHMARK(TreeLowerBound<henrixapp::static_btree::N::ImplicitStaticBTree, TYPE>)     \
+      ->Name("StaticBTree," #N "," #TYPE "," +                                         \
+             std::to_string(henrixapp::static_btree::N::ImplicitStaticBTree<TYPE>::B)) \
+      ->Arg(100)                                                                       \
+      ->Arg(1000)                                                                      \
+      ->Arg(10000)                                                                     \
+      ->Arg(1e6)                                                                       \
+      ->Arg(1e7);
+
+#define RUN_ALL_BENCHMARKS(T, N) \
+  MY_BENCH_MACRO(T, N, uint8_t)  \
+  MY_BENCH_MACRO(T, N, uint16_t) \
+  MY_BENCH_MACRO(T, N, uint32_t) \
+  MY_BENCH_MACRO(T, N, uint64_t) \
+  MY_BENCH_MACRO(T, N, int8_t)   \
+  MY_BENCH_MACRO(T, N, int16_t)  \
+  MY_BENCH_MACRO(T, N, int32_t)  \
+  MY_BENCH_MACRO(T, N, int64_t)
+
+HWY_VISIT_TARGETS(RUN_ALL_BENCHMARKS);
+
 template <typename ValueType>
 static void StdLowerBound(benchmark::State& state) {
   srand(42);
-  auto points = gen_data<ValueType>(state.range(0), 40);
+  std::mt19937_64 rng(rand());
+  auto points = gen_data<ValueType>(state.range(0), rng);
   std::sort(points.begin(), points.end());
-  auto queries = gen_data<ValueType>(state.range(0) / 2, 4);
+  auto queries = gen_data<ValueType>(1e6, rng);
+  ValueType mask;
   for (auto _ : state) {
-    ValueType mask = 0;
+    mask = 0;
     for (auto p : queries) {
       auto q = std::lower_bound(points.begin(), points.end(), p);
       mask ^= (q - points.begin());
+      benchmark::DoNotOptimize(mask);
     }
-    state.counters["mask"] = mask;
   }
+  state.counters["mask"] = mask;
 }
-BENCHMARK(StdLowerBound<uint32_t>)->Arg(100)->Arg(1000)->Arg(10000)->Arg(1e6);
-BENCHMARK(StdLowerBound<uint64_t>)->Arg(100)->Arg(1000)->Arg(10000)->Arg(1e6);
-BENCHMARK(StdLowerBound<uint16_t>)->Arg(100)->Arg(1000)->Arg(10000)->Arg(1e6);
-
+#define STD_BENCHMARK(DT)          \
+  BENCHMARK(StdLowerBound<DT>)     \
+      ->Name("StdLowerbound," #DT) \
+      ->Arg(100)                   \
+      ->Arg(1000)                  \
+      ->Arg(10000)                 \
+      ->Arg(1e6)                   \
+      ->Arg(1e7);
+STD_BENCHMARK(uint8_t);
+STD_BENCHMARK(uint16_t);
+STD_BENCHMARK(uint32_t);
+STD_BENCHMARK(uint64_t);
+STD_BENCHMARK(int8_t);
+STD_BENCHMARK(int16_t);
+STD_BENCHMARK(int32_t);
+STD_BENCHMARK(int64_t);
 }  // namespace bench
 
 #endif
