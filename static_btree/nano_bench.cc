@@ -150,9 +150,14 @@ namespace std {
 // 3. Explicit specialization for our custom type
 template <>
 struct is_floating_point<hwy::float16_t> : std::true_type {};
+
+template <>
+struct numeric_limits<hwy::float16_t> {
+  static constexpr hwy::float16_t max() { return 65504.0; }
+  static constexpr hwy::float16_t min() { return -65504.0; }
+};
 }  // namespace std
 namespace static_btree_bench {
-
 HWY_EXPORT(RunBenchmark);
 HWY_EXPORT(RunBenchmark1);
 HWY_EXPORT(RunStdLowerboundBenchmark);
