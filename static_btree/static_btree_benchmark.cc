@@ -24,8 +24,13 @@ namespace static_btree_bench {
 
 namespace HWY_NAMESPACE {
 namespace {
+// experiment config
 static constexpr const int query_sets = 1;
 static constexpr const int queries_per_sets = 10000;
+static constexpr const int start_value_experiment = 32;
+static constexpr const int multiplier_experiment = 2;
+static constexpr const int stop_value_experiment = 1 << 26;
+
 template <class LowerBoundable>
 struct Benchmark {
   using DataType = typename LowerBoundable::DataType;
@@ -85,8 +90,9 @@ struct BenchmarkSuite {
     auto info = hwy::detail::MakeTypeInfo<DT>();
     char type_name[100];
     hwy::detail::TypeName(info, 1, type_name);
-    for (size_t i = 100; i < std::numeric_limits<DT>::max(); i *= 10) {
-      if (i > 1e7) {
+    for (size_t i = start_value_experiment; i < std::numeric_limits<DT>::max();
+         i *= multiplier_experiment) {
+      if (i > stop_value_experiment) {
         break;
       }
       RunBench<BTree, query_sets, queries_per_sets>(
@@ -103,8 +109,9 @@ struct BenchmarkSuite1 {
     auto info = hwy::detail::MakeTypeInfo<DT>();
     char type_name[100];
     hwy::detail::TypeName(info, 1, type_name);
-    for (size_t i = 100; i < std::numeric_limits<DT>::max(); i *= 10) {
-      if (i > 1e7) {
+    for (size_t i = start_value_experiment; i < std::numeric_limits<DT>::max();
+         i *= multiplier_experiment) {
+      if (i > stop_value_experiment) {
         break;
       }
       RunBench<BTree, query_sets, queries_per_sets>(
@@ -130,8 +137,9 @@ struct StdLowerboundSuite {
     auto info = hwy::detail::MakeTypeInfo<DT>();
     char type_name[100];
     hwy::detail::TypeName(info, 1, type_name);
-    for (size_t i = 100; i < std::numeric_limits<DT>::max(); i *= 10) {
-      if (i > 1e7) {
+    for (size_t i = start_value_experiment; i < std::numeric_limits<DT>::max();
+         i *= multiplier_experiment) {
+      if (i > stop_value_experiment) {
         break;
       }
       RunBench<STLLowerbounder, query_sets, queries_per_sets>(
