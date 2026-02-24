@@ -7,5 +7,6 @@ py_binary(
     deps = [
         requirement("pandas"),
         requirement("seaborn"),
+        requirement("tabulate"),
     ],
 )
