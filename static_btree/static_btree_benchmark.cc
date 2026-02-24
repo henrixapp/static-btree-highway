@@ -1,11 +1,12 @@
-#include <algorithm>
+
+#include <sys/types.h>
+
+#include <cstddef>
 #include <cstdint>
 #include <limits>
-#include <vector>
+#include <string>
 
-#include "benchmark/benchmark.h"
 #include "static_btree/benchmark_helpers.hh"
-
 #undef HWY_TARGET_INCLUDE
 // For dynamic dispatch, specify the name of the current file (unfortunately
 // __FILE__ is not reliable) so that foreach_target.h can re-include it.
@@ -14,100 +15,165 @@
 
 #include "hwy/foreach_target.h"  // IWYU pragma: keep
 #include "hwy/highway.h"
+#include "hwy/nanobenchmark.h"
+#include "hwy/tests/test_util-inl.h"
+#include "static_btree/benchmark_helpers.hh"
 #include "static_btree/static_btree.hh"
 
-HWY_BEFORE_NAMESPACE();
-namespace bench {
+namespace static_btree_bench {
+
 namespace HWY_NAMESPACE {
-template <typename DataType>
-void RunStaticBTreeInternal(benchmark::State& st) {
-  TreeLowerBound<henrixapp::static_btree::HWY_NAMESPACE::ImplicitStaticBTree, DataType>(st);
+namespace {
+static constexpr const int query_sets = 1;
+static constexpr const int queries_per_sets = 10000;
+template <class LowerBoundable>
+struct Benchmark {
+  using DataType = typename LowerBoundable::DataType;
+  LowerBoundable instance;
+  std::vector<std::vector<DataType>> queries;
+
+  Benchmark(const std::vector<DataType>& inputs, const std::vector<std::vector<DataType>>& queries)
+      : instance(inputs), queries(queries) {}
+  size_t operator()(size_t i) {
+    size_t Mask = 0;
+    for (auto p : queries[i]) {
+      Mask ^= instance.lower_bound(p);
+    }
+    return Mask;
+  }
+};
+template <typename DS, int n_queries, int num_per_query>
+void RunBench(const std::string& name, size_t n_inputs) {
+  using DT = typename DS::DataType;
+  srand(42);
+  std::mt19937_64 rng(rand());
+  hwy::Result results[n_queries];
+  hwy::FuncInput input[n_queries];
+  std::iota(input, input + n_queries, 0);
+  std::vector<DT> points = gen_data<DT>(n_inputs, rng);
+  std::vector<std::vector<DT>> queries(n_queries);
+  for (auto& q : queries) {
+    q = gen_data<DT>(num_per_query, rng);
+  }
+  std::sort(points.begin(), points.end());
+  Benchmark<DS> benchmark(points, queries);
+  hwy::Params params;
+  params.verbose = false;
+  params.max_evals = 7;
+  params.target_rel_mad = 0.002;
+
+  auto result_count = 0;
+
+  do {
+    result_count = hwy::MeasureClosure([&](const hwy::FuncInput val) { return benchmark(val); },
+                                       input, n_queries, results, params);
+  } while (result_count != n_queries);
+  double ticks = 0;
+  double var = 0;
+  for (size_t i = 0; i < n_queries; i++) {
+    ticks += results[i].ticks;
+    var += results[i].variability;
+  }
+  std::cout << name << "," << ticks / n_queries << "," << var / n_queries << std::endl;
 }
-}  // namespace HWY_NAMESPACE
-}  // namespace bench
-HWY_AFTER_NAMESPACE();
-#if HWY_ONCE
-namespace bench {
+}  // namespace
+namespace hn = hwy::HWY_NAMESPACE;
+struct BenchmarkSuite {
+  template <typename DT>
+  void operator()(DT) const {
+    using BTree = henrixapp::static_btree::HWY_NAMESPACE::ImplicitStaticBTree<DT>;
+    auto info = hwy::detail::MakeTypeInfo<DT>();
+    char type_name[100];
+    hwy::detail::TypeName(info, 1, type_name);
+    for (size_t i = 100; i < std::numeric_limits<DT>::max(); i *= 10) {
+      if (i > 1e7) {
+        break;
+      }
+      RunBench<BTree, query_sets, queries_per_sets>(
+          std::string(hwy::TargetName(HWY_TARGET)) + "," + std::to_string(BTree({}).B) + "," +
+              std::to_string(i) + "," + std::string(type_name),
+          i);
+    }
+  }
+};
+struct BenchmarkSuite1 {
+  template <typename DT>
+  void operator()(DT) const {
+    using BTree = henrixapp::static_btree::HWY_NAMESPACE::ImplicitStaticBTree1<DT>;
+    auto info = hwy::detail::MakeTypeInfo<DT>();
+    char type_name[100];
+    hwy::detail::TypeName(info, 1, type_name);
+    for (size_t i = 100; i < std::numeric_limits<DT>::max(); i *= 10) {
+      if (i > 1e7) {
+        break;
+      }
+      RunBench<BTree, query_sets, queries_per_sets>(
+          std::string(hwy::TargetName(HWY_TARGET)) + "," + std::to_string(BTree({}).B) + "," +
+              std::to_string(i) + "," + std::string(type_name),
+          i);
+    }
+  }
+};
 template <typename DT>
-void BestImplementation(benchmark::State& st) {
-  HWY_EXPORT_AND_DYNAMIC_DISPATCH_T(RunStaticBTreeInternal<DT>)(st);
-}
-BENCHMARK(bench::BestImplementation<int>)->Arg(100);
-template <template <typename> typename Tree, typename ValueType>
-static void TreeLowerBound(benchmark::State& state) {
-  srand(42);
-  std::mt19937_64 rng(rand());
-  auto points = gen_data<ValueType>(state.range(0), rng);
-  std::sort(points.begin(), points.end());
-  auto queries = gen_data<ValueType>(1e6, rng);
-  Tree<ValueType> tree(points);
-  size_t mask = 0;
-  for (auto _ : state) {
-    mask = 0;
-    for (auto p : queries) {
-      auto s = tree.lower_bound(p);
-      mask ^= s;
-      benchmark::DoNotOptimize(mask);
+struct StdLowerbounder {
+  using DataType = DT;
+  const std::vector<DataType> data;
+  StdLowerbounder(const std::vector<DataType>& _data) : data(_data) {}
+  size_t lower_bound(DT val) {
+    return std::lower_bound(data.begin(), data.end(), val) - data.begin();
+  }
+};
+struct StdLowerboundSuite {
+  template <typename DT>
+  void operator()(DT) const {
+    using STLLowerbounder = StdLowerbounder<DT>;
+    auto info = hwy::detail::MakeTypeInfo<DT>();
+    char type_name[100];
+    hwy::detail::TypeName(info, 1, type_name);
+    for (size_t i = 100; i < std::numeric_limits<DT>::max(); i *= 10) {
+      if (i > 1e7) {
+        break;
+      }
+      RunBench<STLLowerbounder, query_sets, queries_per_sets>(
+          std::string("STL,1,") + std::to_string(i) + "," + std::string(type_name), i);
     }
   }
-  state.counters["mask"] = mask;
-}
-#define MY_BENCH_MACRO(T, N, TYPE)                                                     \
-  BENCHMARK(TreeLowerBound<henrixapp::static_btree::N::ImplicitStaticBTree, TYPE>)     \
-      ->Name("StaticBTree," #N "," #TYPE "," +                                         \
-             std::to_string(henrixapp::static_btree::N::ImplicitStaticBTree<TYPE>::B)) \
-      ->Arg(100)                                                                       \
-      ->Arg(1000)                                                                      \
-      ->Arg(10000)                                                                     \
-      ->Arg(1e6)                                                                       \
-      ->Arg(1e7);
+};
+void RunBenchmark() { hn::ForAllTypes(BenchmarkSuite()); }
+void RunBenchmark1() { hn::ForAllTypes(BenchmarkSuite1()); }
 
-#define RUN_ALL_BENCHMARKS(T, N) \
-  MY_BENCH_MACRO(T, N, uint8_t)  \
-  MY_BENCH_MACRO(T, N, uint16_t) \
-  MY_BENCH_MACRO(T, N, uint32_t) \
-  MY_BENCH_MACRO(T, N, uint64_t) \
-  MY_BENCH_MACRO(T, N, int8_t)   \
-  MY_BENCH_MACRO(T, N, int16_t)  \
-  MY_BENCH_MACRO(T, N, int32_t)  \
-  MY_BENCH_MACRO(T, N, int64_t)
+void RunStdLowerboundBenchmark() { hn::ForAllTypes(StdLowerboundSuite()); }
+}  // namespace HWY_NAMESPACE
+}  // namespace static_btree_bench
+#if HWY_ONCE
+namespace std {
+// This is kind of nasty to do, but makes the other things compile more easily.
+template <>
+struct is_floating_point<hwy::float16_t> : std::true_type {};
 
-HWY_VISIT_TARGETS(RUN_ALL_BENCHMARKS);
-
-template <typename ValueType>
-static void StdLowerBound(benchmark::State& state) {
-  srand(42);
-  std::mt19937_64 rng(rand());
-  auto points = gen_data<ValueType>(state.range(0), rng);
-  std::sort(points.begin(), points.end());
-  auto queries = gen_data<ValueType>(1e6, rng);
-  ValueType mask;
-  for (auto _ : state) {
-    mask = 0;
-    for (auto p : queries) {
-      auto q = std::lower_bound(points.begin(), points.end(), p);
-      mask ^= (q - points.begin());
-      benchmark::DoNotOptimize(mask);
-    }
+template <>
+struct numeric_limits<hwy::float16_t> {
+  static constexpr hwy::float16_t max() { return hwy::HighestValue<hwy::float16_t>(); }
+  static constexpr hwy::float16_t min() { return hwy::LowestValue<hwy::float16_t>(); }
+};
+}  // namespace std
+namespace static_btree_bench {
+HWY_EXPORT(RunBenchmark);
+HWY_EXPORT(RunBenchmark1);
+HWY_EXPORT(RunStdLowerboundBenchmark);
+void RunBenchmarks() {
+  for (int64_t target : hwy::SupportedAndGeneratedTargets()) {
+    hwy::SetSupportedTargetsForTest(target);
+    HWY_DYNAMIC_DISPATCH(RunBenchmark)();
+    HWY_DYNAMIC_DISPATCH(RunBenchmark1)();
   }
-  state.counters["mask"] = mask;
+  HWY_DYNAMIC_DISPATCH(RunStdLowerboundBenchmark)();
+  hwy::SetSupportedTargetsForTest(0);  // Reset the mask afterwards.
 }
-#define STD_BENCHMARK(DT)          \
-  BENCHMARK(StdLowerBound<DT>)     \
-      ->Name("StdLowerbound," #DT) \
-      ->Arg(100)                   \
-      ->Arg(1000)                  \
-      ->Arg(10000)                 \
-      ->Arg(1e6)                   \
-      ->Arg(1e7);
-STD_BENCHMARK(uint8_t);
-STD_BENCHMARK(uint16_t);
-STD_BENCHMARK(uint32_t);
-STD_BENCHMARK(uint64_t);
-STD_BENCHMARK(int8_t);
-STD_BENCHMARK(int16_t);
-STD_BENCHMARK(int32_t);
-STD_BENCHMARK(int64_t);
-}  // namespace bench
-
+}  // namespace static_btree_bench
+int main() {
+  std::cout << "ISA,B,N,Type,cpu_mean,var" << std::endl;
+  static_btree_bench::RunBenchmarks();
+  return 0;
+}
 #endif

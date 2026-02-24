@@ -24,19 +24,6 @@ cc_binary(
     visibility = ["//visibility:public"],
     deps = [
         ":static_btree",
-        "@google_benchmark//:benchmark_main",
-    ],
-)
-
-cc_binary(
-    name = "nano_benchmark",
-    srcs = [
-        "benchmark_helpers.hh",
-        "nano_bench.cc",
-    ],
-    visibility = ["//visibility:public"],
-    deps = [
-        ":static_btree",
         "@googletest//:gtest",
         "@highway//:hwy_test_util",
         "@highway//:nanobenchmark",
