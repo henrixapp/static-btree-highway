@@ -32,26 +32,23 @@ def plot_benchmarks(csv_file):
     print(df)
     # 3. Setup Plotting Aesthetics
     sns.set_theme(style="whitegrid")
-    max_isa, max_b, max_speedup = "", 0, 0
+    print(df.groupby("mask").count())
     max_idx = df.groupby(by=["Type"])["speedup"].transform("max") == df["speedup"]
     max_df = (
         df[max_idx][["Type", "ISA", "B", "speedup"]]
         .reset_index()
-        .set_index("Type")
+        .set_index("Type")[["ISA", "B", "speedup"]]
         .sort_values("Type")
     )
     max_df["Device"] = os.path.basename(sys.argv[1])
     max_df.to_csv(f"{sys.argv[2]}/max.csv")
     print(max_df.to_markdown())
     for dt in df["Type"].unique():
-        plt.figure(figsize=(12, 6))
         # 4. Create the Plot
         # We'll plot Size on X and Time on Y, using 'ISA' as the color hue
         subdf = df[df["Type"] == dt]
-        if subdf["speedup"].max() > max_speedup:
-            max_speedup = subdf["speedup"].max()
-            max_b = subdf
-        plt.errorbar(
+        fig, ax = plt.subplots(figsize=(12, 6))
+        ax.errorbar(
             x=subdf["N"],
             y=subdf["speedup"],
             yerr=subdf["mad"],
@@ -68,13 +65,14 @@ def plot_benchmarks(csv_file):
             markers=True,
             markersize=12,
             dashes=False,
+            ax=ax,
         )
         # Formatting
         plt.title(f"Benchmark Performance by ISA and B (datatype:{dt})", fontsize=15)
         plt.xlabel("Input Size (N)", fontsize=12)
         plt.ylabel(f"Speed up", fontsize=12)
         if "8" not in dt:
-            plt.xscale("log")  # Often useful for benchmark sizes
+            ax.set_xscale("log", base=2)  # Often useful for benchmark sizes
         # plt.yscale("log")
         plt.legend(title="Configurations", bbox_to_anchor=(1, 0), loc="lower left")
         plt.tight_layout()

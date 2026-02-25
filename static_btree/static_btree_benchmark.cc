@@ -36,7 +36,7 @@ struct Benchmark {
   using DataType = typename LowerBoundable::DataType;
   LowerBoundable instance;
   std::vector<std::vector<DataType>> queries;
-
+  size_t mask = 0;
   Benchmark(const std::vector<DataType>& inputs, const std::vector<std::vector<DataType>>& queries)
       : instance(inputs), queries(queries) {}
   size_t operator()(size_t i) {
@@ -44,6 +44,7 @@ struct Benchmark {
     for (auto p : queries[i]) {
       Mask ^= instance.lower_bound(p);
     }
+    mask = Mask;
     return Mask;
   }
 };
@@ -79,7 +80,8 @@ void RunBench(const std::string& name, size_t n_inputs) {
     ticks += results[i].ticks;
     var += results[i].variability;
   }
-  std::cout << name << "," << ticks / n_queries << "," << var / n_queries << std::endl;
+  std::cout << name << "," << ticks / n_queries << "," << var / n_queries << "," << benchmark.mask
+            << std::endl;
 }
 }  // namespace
 namespace hn = hwy::HWY_NAMESPACE;
@@ -170,17 +172,17 @@ HWY_EXPORT(RunBenchmark);
 HWY_EXPORT(RunBenchmark1);
 HWY_EXPORT(RunStdLowerboundBenchmark);
 void RunBenchmarks() {
+  HWY_DYNAMIC_DISPATCH(RunStdLowerboundBenchmark)();
   for (int64_t target : hwy::SupportedAndGeneratedTargets()) {
     hwy::SetSupportedTargetsForTest(target);
     HWY_DYNAMIC_DISPATCH(RunBenchmark)();
     HWY_DYNAMIC_DISPATCH(RunBenchmark1)();
   }
-  HWY_DYNAMIC_DISPATCH(RunStdLowerboundBenchmark)();
   hwy::SetSupportedTargetsForTest(0);  // Reset the mask afterwards.
 }
 }  // namespace static_btree_bench
 int main() {
-  std::cout << "ISA,B,N,Type,cpu_mean,var" << std::endl;
+  std::cout << "ISA,B,N,Type,cpu_mean,var,mask" << std::endl;
   static_btree_bench::RunBenchmarks();
   return 0;
 }
