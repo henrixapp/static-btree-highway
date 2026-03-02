@@ -35,9 +35,9 @@ def plot_benchmarks(csv_file):
     print(df.groupby("mask").count())
     max_idx = df.groupby(by=["Type"])["speedup"].transform("max") == df["speedup"]
     max_df = (
-        df[max_idx][["Type", "ISA", "B", "speedup"]]
+        df[max_idx][["Type", "ISA", "B", "speedup", "N"]]
         .reset_index()
-        .set_index("Type")[["ISA", "B", "speedup"]]
+        .set_index("Type")[["ISA", "B", "speedup", "N"]]
         .sort_values("Type")
     )
     max_df["Device"] = os.path.basename(sys.argv[1])
