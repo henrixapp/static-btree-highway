@@ -379,12 +379,16 @@ namespace HWY_NAMESPACE {
 namespace {
 static constexpr const int query_sets = 1;
 static constexpr const int queries_per_sets = 10000;
+static constexpr const int start_value_experiment = 32;
+static constexpr const int multiplier_experiment = 2;
+static constexpr const int stop_value_experiment = 1 << 26;
+
 template <class LowerBoundable>
 struct Benchmark {
   using DataType = typename LowerBoundable::DataType;
   LowerBoundable instance;
   std::vector<std::vector<DataType>> queries;
-
+  size_t mask = 0;
   Benchmark(const std::vector<DataType>& inputs, const std::vector<std::vector<DataType>>& queries)
       : instance(inputs), queries(queries) {}
   size_t operator()(size_t i) {
@@ -392,6 +396,7 @@ struct Benchmark {
     for (auto p : queries[i]) {
       Mask ^= instance.lower_bound(p);
     }
+    mask = Mask;
     return Mask;
   }
 };
@@ -415,19 +420,20 @@ void RunBench(const std::string& name, size_t n_inputs) {
   params.max_evals = 7;
   params.target_rel_mad = 0.002;
 
-  auto result_count = 0;
+  size_t result_count = 0;
 
   do {
     result_count = hwy::MeasureClosure([&](const hwy::FuncInput val) { return benchmark(val); },
                                        input, n_queries, results, params);
-  } while (result_count != n_queries); //loop to get valid results
+  } while (result_count != n_queries);
   double ticks = 0;
   double var = 0;
   for (size_t i = 0; i < n_queries; i++) {
     ticks += results[i].ticks;
     var += results[i].variability;
   }
-  std::cout << name << "," << ticks / n_queries << "," << var / n_queries << std::endl;
+  std::cout << name << "," << ticks / n_queries << "," << var / n_queries << "," << benchmark.mask
+            << std::endl;
 }
 }  // namespace
 namespace hn = hwy::HWY_NAMESPACE;
@@ -438,8 +444,9 @@ struct BenchmarkSuite {
     auto info = hwy::detail::MakeTypeInfo<DT>();
     char type_name[100];
     hwy::detail::TypeName(info, 1, type_name);
-    for (size_t i = 100; i < std::numeric_limits<DT>::max(); i *= 10) {
-      if (i > 1e7) {
+    for (size_t i = start_value_experiment; i < std::numeric_limits<DT>::max();
+         i *= multiplier_experiment) {
+      if (i > stop_value_experiment) {
         break;
       }
       RunBench<BTree, query_sets, queries_per_sets>(
@@ -487,22 +494,30 @@ With this setup we are good to go to run on multiple platforms.
 We generated the data for the plots by running `bazel run -c opt //static_btree:static_btree_benchmark > $PWD/results/<device>.csv`.
 The plotting script was generated with the help of gemini (run `bazel run -c opt plot -- $PWD/results/<device>.csv $PWD/images/<device>` to generate a plot).
 
-We plot the speed-up over the STL implementation for the queries for several sizes of input. We start at 100 and cut of at 10^7 or if the array has to contain duplicates (in other words we sample not more values than the maximum value).
+We plot the speed-up over the STL implementation for the queries for several sizes of input. We start at 32 and cut of at 2^26 or if the array has to contain duplicates (in other words we sample not more values than the maximum value).
 Keep in mind that we use a uniform distribution and having other distributions could impact performance.
 #### Laptop (AMD Ryzen 7840 Pro)
 The tests were run with a power supply supplying energy.
 ##### (Signed) Integer 
 ![AMD Ryzen 7840 Pro/32 bit integer](images/laptop/benchmark_results_i32.png)
 The plot above shows the speedup for the available instruction-sets on the AMD CPU.
-We can see that for smaller vectors (size=100), the speedup is not as big as for bigger arrays.
-The older SSE instruction sets are even slower than the STL-lowerbound. These instruction set does not have that many Lanes, as seen by their reported `B` as 2 or 4.
+We can see that for smaller vectors (size< 2^8>), the speedup is not as big as for bigger vectors.
+The older SSE instruction sets are even slower than the STL-lowerbound for small arrays. These instruction set does not have that many Lanes, as seen by their reported `B` as 2 or 4.
 On the same instruction set, e.g. AVX2 or SSE4, can also see that for larger inputs, that the algorithm with twice the lane width are faster, while for smaller inputs, it is not as benefical.
-Overall, we can see a speedup of up to 11-12 times.
+Overall, we can see a speedup of up to 11-12 times while we are still in cache.
+When reaching N>2^21 (around the L3 Cache size of the CPU), we can see a step increase to a speed up of nearly 100.
+When running under perf, we can observe that the std::lower_bound implementation only manages  `0.08  insn per cycle`, while when only running avx this number is around 0.63 instructions per cycle.
 
 ##### Larger Floating Points numbers (f64)
 ![AMD Ryzen 7840 Pro/32 bit integer](images/laptop/benchmark_results_f64.png)
 For double length (64-bit) floating points we report the numbers in the figure above.
-Again, we can see that newer instruction sets, with higher number of Lanes speed up the search between 3 and 12 times.
+Again, we can see that newer instruction sets, with higher number of Lanes speed up the search between 3 and 12 times for N<=2^21.
+The speed up also increases to 80-90, which is a lot and indicates that we might be measuring wrongly.
+
+We tested our harness with having 5 different query sets and adding fences, but could not get more reasonable (smaller) numbers.
+On a Mac M1 Pro (see below), we did see some smaller spike around the same number (2^22).
+On the raspberry pi we saw spikes as well.
+When running on  the Desktop CPU, we did not saw these bigger peaks.
 
 #### Desktop (AMD Ryzen 9800X3D)
 ##### unsigned integer 64-bit
@@ -523,13 +538,13 @@ The speedup on the Macbook Pro with M1Pro is not as pronounced as on the other p
 When going from 100 to 1000 points there seems to be a performance drop, esp. for B=4. This dip is also visible on all other data types, caused by the transition out of a size that fits the L1 cache.
 
 ##### Raspberry Pi 5 (int64)
+We only ran between 100 and 10^7 on the raspberry pi.
 ![Raspberry Pi 5](images/pi/benchmark_results_i64.png)
 The raspberry pi supports NEON as well (in two flavors).
 The two flavors do not differ that much in terms of speed up.
 This can be explained by the fact that we do not use their functional difference (AES).
 Because the ARM processor does not have that much lanes, resulting in a B of 2 or 4, the speedup is not as good as on other platforms. 
 The spike for 10^6 occurs in repeated experiments.
-This can be explained by the b+tree being very full at this stage and probably a well aligned page-size.
 
 ## Conclusion
 

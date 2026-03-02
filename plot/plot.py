@@ -73,7 +73,7 @@ def plot_benchmarks(csv_file):
         plt.ylabel(f"Speed up", fontsize=12)
         if "8" not in dt:
             ax.set_xscale("log", base=2)  # Often useful for benchmark sizes
-        # plt.yscale("log")
+        plt.yscale("log")
         plt.legend(title="Configurations", bbox_to_anchor=(1, 0), loc="lower left")
         plt.tight_layout()
 

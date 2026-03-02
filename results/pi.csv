@@ -1,4 +1,4 @@
-ISA,B,N,Type,cpu_mean,var
+ISA,B,N,Type,cpu_mean,var,mask
 NEON,32,100,i8,7088,6.99888e-05
 NEON,16,100,i16,6525,0
 NEON,16,1000,i16,8943,0.000279533

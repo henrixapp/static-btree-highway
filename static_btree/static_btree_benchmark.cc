@@ -68,7 +68,7 @@ void RunBench(const std::string& name, size_t n_inputs) {
   params.max_evals = 7;
   params.target_rel_mad = 0.002;
 
-  auto result_count = 0;
+  size_t result_count = 0;
 
   do {
     result_count = hwy::MeasureClosure([&](const hwy::FuncInput val) { return benchmark(val); },
