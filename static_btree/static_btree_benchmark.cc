@@ -41,8 +41,11 @@ struct Benchmark {
       : instance(inputs), queries(queries) {}
   size_t operator()(size_t i) {
     size_t Mask = 0;
-    for (auto p : queries[i]) {
-      Mask ^= instance.lower_bound(p);
+    size_t last = 0;
+    size_t elems = queries[i].size();
+    for (size_t j = 0; j < elems; j++) {
+      last = instance.lower_bound(queries[i][j * hwy::Unpredictable1()]);
+      Mask ^= last;
     }
     mask = Mask;
     return Mask;

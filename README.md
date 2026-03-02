@@ -358,7 +358,11 @@ typename std::enable_if<std::is_floating_point<T>::value, std::vector<T>>::type 
 }
 ```
 Note that some float16s defined in highway are not part of the STL, so we decided to just reopen the `std` namespace and manually add them.
-## Benchmarking
+## Benchmarking (Not finished yet)
+
+> **This section is not finished yet and requires more input.**
+
+
 Now to the benchmark, instead of google benchmark we use the MeasureClosure provided in highway's [nano-benchmark](https://github.com/google/highway/blob/master/hwy/nanobenchmark.h) file.
 This measures the running time in ticks, we normalize by the ticks reported when using `std::lower_bound`.
 We test on several sizes of input data, depending on the maximum value that the datatype can hold, and fix the number of queries to 10000.
