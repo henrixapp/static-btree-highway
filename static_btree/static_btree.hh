@@ -70,7 +70,7 @@ struct ImplicitStaticBTree {
       }
     }
   }
-  size_t lower_bound(const ValueType _x) {
+  HWY_INLINE size_t lower_bound(const ValueType _x) {
     size_t k = 0;  // we assume k already multiplied by B to optimize pointer arithmetic
     auto x = hn::Set(d, _x);
     for (size_t h = H - 1; h > 0; h--) {
@@ -144,7 +144,7 @@ struct ImplicitStaticBTree1 {
       }
     }
   }
-  size_t lower_bound(const ValueType _x) {
+  HWY_INLINE size_t lower_bound(const ValueType _x) {
     size_t k = 0;  // we assume k already multiplied by B to optimize pointer arithmetic
     auto x = hn::Set(d, _x);
     for (size_t h = H - 1; h > 0; h--) {

@@ -1,6 +1,7 @@
 
 #include <sys/types.h>
 
+#include <bit>
 #include <cstddef>
 #include <cstdint>
 #include <limits>
@@ -21,30 +22,39 @@
 #include "static_btree/static_btree.hh"
 
 namespace static_btree_bench {
-
+HWY_BEFORE_NAMESPACE();
 namespace HWY_NAMESPACE {
 namespace {
-// experiment config
+//  experiment config
 static constexpr const int query_sets = 1;
 static constexpr const int queries_per_sets = 10000;
 static constexpr const int start_value_experiment = 32;
 static constexpr const int multiplier_experiment = 2;
 static constexpr const int stop_value_experiment = 1 << 26;
-
+template <typename T>
+T Random(hwy::RandomState* state, size_t last) {
+  auto res = hwy::Random64(state) +
+             last;  // used instead of ^ (because to easy to guess what happens to values)
+  T f;
+  std::memcpy(&f, &res, sizeof(T));
+  return f;
+}
 template <class LowerBoundable>
 struct Benchmark {
   using DataType = typename LowerBoundable::DataType;
   LowerBoundable instance;
-  std::vector<std::vector<DataType>> queries;
   size_t mask = 0;
-  Benchmark(const std::vector<DataType>& inputs, const std::vector<std::vector<DataType>>& queries)
-      : instance(inputs), queries(queries) {}
+  size_t queries = 0;
+  Benchmark(const std::vector<DataType>& inputs, size_t n_queries)
+      : instance(inputs), queries(n_queries) {}
   size_t operator()(size_t i) {
     size_t Mask = 0;
-    size_t last = 0;
-    size_t elems = queries[i].size();
-    for (size_t j = 0; j < elems; j++) {
-      last = instance.lower_bound(queries[i][j * hwy::Unpredictable1()]);
+    size_t last = hwy::Unpredictable1();
+    hwy::RandomState state(last);
+    DataType sum = hwy::Unpredictable1();
+    for (size_t j = 0; j < queries; j++) {
+      sum = Random<DataType>(&state, last);
+      last = instance.lower_bound(sum);
       Mask ^= last;
     }
     mask = Mask;
@@ -65,7 +75,7 @@ void RunBench(const std::string& name, size_t n_inputs) {
     q = gen_data<DT>(num_per_query, rng);
   }
   std::sort(points.begin(), points.end());
-  Benchmark<DS> benchmark(points, queries);
+  Benchmark<DS> benchmark(points, num_per_query);
   hwy::Params params;
   params.verbose = false;
   params.max_evals = 7;
@@ -157,6 +167,7 @@ void RunBenchmark1() { hn::ForAllTypes(BenchmarkSuite1()); }
 
 void RunStdLowerboundBenchmark() { hn::ForAllTypes(StdLowerboundSuite()); }
 }  // namespace HWY_NAMESPACE
+HWY_AFTER_NAMESPACE();
 }  // namespace static_btree_bench
 #if HWY_ONCE
 namespace std {
